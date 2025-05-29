@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Web Lab 3</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    #status {
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    #controls {
+      margin-bottom: 20px;
+    }
+    button {
+      margin-right: 10px;
+      padding: 10px 15px;
+      font-size: 14px;
+    }
+    #infoBox {
+      white-space: pre-line;
+      background-color: #f0f0f0;
+      padding: 10px;
+      border-left: 4px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+<h1>Web Lab 3 - Motovylovets Oleksandr</h1>
+
+<div id="status">Checking login status...</div>
+
+<div id="controls">
+  <button id="loginBtn">Log In</button>
+  <button id="infoBtn" disabled>Get User Info</button>
+</div>
+
+<div id="infoBox">User information will appear here.</div>
+
+<script>
+  document.getElementById('loginBtn').addEventListener('click', () => {
+    window.location.assign('/auth/login');
+  });
+
+  document.getElementById('infoBtn').addEventListener('click', async () => {
+    const status = document.getElementById('status');
+    const infoBox = document.getElementById('infoBox');
+
+    try {
+      const response = await fetch('/user/info');
+      if (response.ok) {
+        const data = await response.json();
+        infoBox.textContent = `User ID: ${data.userId}\nUsername: ${data.username}`;
+      } else if (response.status === 401) {
+        status.textContent = 'Status: User not logged in';
+        infoBox.textContent = 'User not logged in.';
+      } else {
+        infoBox.textContent = `Error: ${response.status}`;
+      }
+    } catch (error) {
+      infoBox.textContent = 'Connection error. Please try again.';
+    }
+  });
+
+  async function updateAuthStatus() {
+    try {
+      const res = await fetch('/auth/status');
+      const data = await res.json();
+
+      const statusEl = document.getElementById('status');
+      const infoBtn = document.getElementById('infoBtn');
+
+      if (data.loggedIn) {
+        statusEl.textContent = 'Status: Logged in';
+        infoBtn.disabled = false;
+      } else {
+        statusEl.textContent = 'Status: Not logged in';
+        infoBtn.disabled = true;
+      }
+    } catch (error) {
+      document.getElementById('status').textContent = 'Status: Unknown (error)';
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', updateAuthStatus);
+</script>
+</body>
+</html>
