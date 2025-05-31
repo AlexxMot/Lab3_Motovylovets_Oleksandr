@@ -2,90 +2,206 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Web Lab 3</title>
+  <title>Web Lab 4</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 2em auto;
+      max-width: 800px;
+      padding: 1em;
+      background-color: #f4f6f8;
+      color: #333;
     }
-    #status {
-      font-weight: bold;
-      margin-bottom: 10px;
+
+    h1, h2 {
+      color: #2c3e50;
     }
-    #controls {
-      margin-bottom: 20px;
-    }
+
     button {
-      margin-right: 10px;
-      padding: 10px 15px;
-      font-size: 14px;
+      padding: 0.5em 1.2em;
+      margin: 0.3em;
+      border: none;
+      border-radius: 5px;
+      background-color: #3498db;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.2s ease-in-out;
     }
-    #infoBox {
-      white-space: pre-line;
-      background-color: #f0f0f0;
-      padding: 10px;
-      border-left: 4px solid #ccc;
+
+    button:disabled {
+      background-color: #bdc3c7;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: #2980b9;
+    }
+
+    #status {
+      font-size: 1.1em;
+      margin-bottom: 1em;
+    }
+
+    #infoBox, #priceBox {
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1em;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      margin-bottom: 1.5em;
+    }
+
+    #infoBox em, #priceBox em {
+      color: #7f8c8d;
+    }
+
+    #priceBox div {
+      padding: 0.2em 0;
     }
   </style>
 </head>
 <body>
-<h1>Web Lab 3 - Motovylovets Oleksandr</h1>
+<h1>Web Lab 4: Motovylovets Oleksandr</h1>
 
-<div id="status">Checking login status...</div>
+<div id="status">Status: Not logged in</div>
 
-<div id="controls">
-  <button id="loginBtn">Log In</button>
-  <button id="infoBtn" disabled>Get User Info</button>
+<div>
+  <button onclick="login()">Login</button>
+  <button onclick="getUserInfo()" id="getUserInfoButton" disabled>Get User Info</button>
 </div>
 
-<div id="infoBox">User information will appear here.</div>
+<div id="infoBox">
+  <em>Information about user will appear here...</em>
+</div>
 
-<script>
-  document.getElementById('loginBtn').addEventListener('click', () => {
-    window.location.assign('/auth/login');
-  });
+<h2>Live Currency Prices</h2>
 
-  document.getElementById('infoBtn').addEventListener('click', async () => {
-    const status = document.getElementById('status');
-    const infoBox = document.getElementById('infoBox');
+<div>
+  <button onclick="startStream()">Get Currencies</button>
+  <button onclick="stopStream()">Stop Stream</button>
+</div>
 
+<div id="priceBox">
+  <em>Click "Get Currencies" to display prices after logging in.</em>
+</div>
+
+<script type="module">
+  import { decodePriceUpdate } from './protobuf/price_pb.js';
+
+  let ws = null;
+  let isLoggedIn = false;
+
+  const configuredPairs = ["DOGEUSDT", "BTCUSDT", "ETHUSDT", "XRPUSDT"];
+
+  function login() {
+    window.location.href = "/auth/login";
+  }
+
+  async function getUserInfo() {
+    const infoBox = document.getElementById("infoBox");
     try {
-      const response = await fetch('/user/info');
-      if (response.ok) {
-        const data = await response.json();
-        infoBox.textContent = `User ID: ${data.userId}\nUsername: ${data.username}`;
-      } else if (response.status === 401) {
-        status.textContent = 'Status: User not logged in';
-        infoBox.textContent = 'User not logged in.';
+      const res = await fetch("/user/info");
+      if (res.ok) {
+        const user = await res.json();
+        infoBox.innerHTML = `
+            <p><strong>User ID:</strong> ${user.userId}</p>
+            <p><strong>Username:</strong> ${user.username}</p>
+          `;
       } else {
-        infoBox.textContent = `Error: ${response.status}`;
+        infoBox.innerHTML = "<p style='color: red;'>User not logged in.</p>";
       }
-    } catch (error) {
-      infoBox.textContent = 'Connection error. Please try again.';
-    }
-  });
-
-  async function updateAuthStatus() {
-    try {
-      const res = await fetch('/auth/status');
-      const data = await res.json();
-
-      const statusEl = document.getElementById('status');
-      const infoBtn = document.getElementById('infoBtn');
-
-      if (data.loggedIn) {
-        statusEl.textContent = 'Status: Logged in';
-        infoBtn.disabled = false;
-      } else {
-        statusEl.textContent = 'Status: Not logged in';
-        infoBtn.disabled = true;
-      }
-    } catch (error) {
-      document.getElementById('status').textContent = 'Status: Unknown (error)';
+    } catch (err) {
+      infoBox.innerHTML = "<p style='color: red;'>Connection error.</p>";
     }
   }
 
-  window.addEventListener('DOMContentLoaded', updateAuthStatus);
+  async function checkAuthStatus() {
+    try {
+      const res = await fetch("/auth/status");
+      const data = await res.json();
+      isLoggedIn = data.loggedIn;
+      document.getElementById("status").textContent = isLoggedIn ? "Status: Logged in" : "Status: Not logged in";
+      document.getElementById("getUserInfoButton").disabled = !isLoggedIn;
+    } catch {
+      // Silent fail
+    }
+  }
+
+  function startStream() {
+    if (!isLoggedIn) {
+      alert("You have to be logged in.");
+      return;
+    }
+
+    if (ws) {
+      console.warn("Stream already active.");
+      return;
+    }
+
+    initializePriceDisplay();
+
+    ws = new WebSocket("wss://localhost:8001/ws/price");
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      console.log("WebSocket connected.");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const buffer = new Uint8Array(event.data);
+        const decoded = decodePriceUpdate(buffer);
+        updatePrice(decoded);
+      } catch (e) {
+        console.error("Failed to decode protobuf:", e);
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error("WebSocket error:", e);
+      document.getElementById("priceBox").innerHTML = `<p style="color: red;">WebSocket error occurred.</p>`;
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket closed.");
+      ws = null;
+    };
+  }
+
+  function stopStream() {
+    if (!ws) return;
+    ws.close();
+    ws = null;
+    document.getElementById("priceBox").innerHTML = `<p style="color: gray;">Stream stopped.</p>`;
+  }
+
+  function initializePriceDisplay() {
+    const box = document.getElementById("priceBox");
+    box.innerHTML = "";
+    configuredPairs.forEach(symbol => {
+      const el = document.createElement("div");
+      el.id = `price-${symbol}`;
+      el.innerHTML = `${symbol}: <span style="font-weight: bold;">Loading...</span>`;
+      box.appendChild(el);
+    });
+  }
+
+  function updatePrice(msg) {
+    const symbol = msg.symbol.toUpperCase();
+    const price = msg.price;
+    const el = document.getElementById(`price-${symbol}`);
+    if (el) {
+      el.querySelector("span").textContent = price;
+    }
+  }
+
+  window.addEventListener("load", checkAuthStatus);
+
+  window.login = login;
+  window.getUserInfo = getUserInfo;
+  window.startStream = startStream;
+  window.stopStream = stopStream;
 </script>
 </body>
 </html>
